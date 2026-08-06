@@ -1,0 +1,6 @@
+# 工作日志管理系统 - 依赖
+# 安装: pip install -r requirements.txt
+
+streamlit>=1.32.0
+pandas>=2.0.0
+openpyxl>=3.1.0

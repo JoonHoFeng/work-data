@@ -1,0 +1,72 @@
+# Worklog 工作日志项目
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual env
+.venv/
+venv/
+ENV/
+env/
+
+# Streamlit
+.streamlit/
+streamlit.pid
+streamlit.log
+
+# Data & generated (keep structure, ignore content)
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite3
+data/*.bak*
+data/worklog.db*
+!data/.gitkeep
+
+reports/*.xlsx
+reports/*.pdf
+reports/backup_*.db
+!reports/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs & runtime
+*.log
+logs/
+
+# Local screenshots / temp media (do not commit)
+*.png
+*.jpg
+*.jpeg
+*.gif
+!assets/**
+
+# Secrets (if any)
+.env
+config/secrets.json
