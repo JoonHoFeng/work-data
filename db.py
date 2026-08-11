@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import json
 
-DB_PATH = Path("data/worklog.db")
+from paths import app_base_dir, ensure_runtime_dirs
+
+ensure_runtime_dirs()
+DB_PATH = app_base_dir() / "data" / "worklog.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 from templates import (  # noqa: E402
@@ -404,7 +407,7 @@ def backup_database(backup_dir: Optional[Path] = None, keep: int = 10) -> Path:
     import shutil
 
     src = DB_PATH
-    out_dir = Path(backup_dir) if backup_dir else Path("reports")
+    out_dir = Path(backup_dir) if backup_dir else (app_base_dir() / "reports")
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     dst = out_dir / f"worklog_backup_{ts}.db"

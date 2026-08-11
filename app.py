@@ -13,9 +13,16 @@ from pathlib import Path
 from typing import Dict
 import sys
 
-# 确保能导入本地模块
-ROOT = Path(__file__).parent
+# 确保能导入本地模块（开发 / PyInstaller 打包）
+from paths import app_base_dir, bundle_dir, ensure_runtime_dirs
+
+ROOT = ensure_runtime_dirs()
+_BUNDLE = bundle_dir()
+sys.path.insert(0, str(_BUNDLE))
 sys.path.insert(0, str(ROOT))
+# 工作目录固定到可写根目录，便于 data/reports 相对路径
+import os as _os
+_os.chdir(ROOT)
 
 from db import (
     init_db, add_work_items, get_entries, update_entry, delete_entry,

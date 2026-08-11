@@ -87,9 +87,41 @@ python3 scripts/init_db.py
 python3 -m unittest tests/test_core.py -v
 ```
 
+## Windows 双击运行（打包 exe）
+
+本机是 **Windows** 时，在项目根目录双击或运行：
+
+```bat
+build_windows.bat
+```
+
+完成后得到：
+
+```
+dist\Worklog\Worklog.exe   ← 双击启动
+dist\Worklog\_internal\    ← 依赖（勿删，整夹一起拷贝）
+```
+
+说明：
+
+| 项 | 说明 |
+|----|------|
+| 打包环境 | **必须在 Windows** 上构建（当前 Mac 无法直接产出可用 Win  exe） |
+| 分发方式 | 拷贝整个 `dist\Worklog` 文件夹，不要只拷一个 exe |
+| 数据位置 | 与 `Worklog.exe` 同目录下的 `data\worklog.db` |
+| 首次启动 | 稍慢，会自动开浏览器访问本机端口 |
+| 停止 | 关闭黑色控制台窗口即可 |
+| 体积 | 约数百 MB（含 Python + Streamlit） |
+
+开发调试也可用：
+
+```bat
+python launcher.py
+```
+
 ## 技术栈
 
-- Streamlit 1.50.x · pandas · SQLite · openpyxl
+- Streamlit 1.50.x · pandas · SQLite · openpyxl ·（可选）PyInstaller
 
 ## 版本
 
