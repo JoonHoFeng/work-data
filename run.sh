@@ -22,15 +22,17 @@ else
     source .venv/bin/activate
 fi
 
-# 确保数据库存在
+# Streamlit 右上角菜单等系统文案中文化（改 venv 前端静态资源）
+python3 scripts/patch_streamlit_zh.py
+
+# 确保数据库存在（默认不插演示数据）
 if [ ! -f "data/worklog.db" ]; then
-    echo "📦 初始化数据库 + 示例数据..."
+    echo "📦 初始化数据库..."
     python3 scripts/init_db.py
 fi
 
 if [ "$BACKGROUND" = true ]; then
     echo "🚀 后台启动 Streamlit..."
-    # 使用 venv 内的 Python + 模块方式（最可靠），headless 模式不自动打开浏览器
     nohup .venv/bin/python -m streamlit run app.py \
         --server.headless true \
         --server.port 8501 \
@@ -42,9 +44,8 @@ if [ "$BACKGROUND" = true ]; then
     echo "   日志文件: streamlit.log"
     echo "   访问地址: http://localhost:8501"
     echo ""
-    echo "停止命令: kill \$(cat streamlit.pid)"
+    echo "停止命令: ./stop.sh"
 else
     echo "🚀 启动 Streamlit..."
-    # 使用 venv 内的 Python 直接以模块方式启动（比依赖 PATH 里的 streamlit 命令更可靠）
     .venv/bin/python -m streamlit run app.py --server.headless false
 fi

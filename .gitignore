@@ -29,7 +29,8 @@ ENV/
 env/
 
 # Streamlit
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 streamlit.pid
 streamlit.log
 
@@ -40,7 +41,12 @@ data/*.sqlite
 data/*.sqlite3
 data/*.bak*
 data/worklog.db*
+data/*.ics
 !data/.gitkeep
+
+# Runtime PIDs / ICS server
+ics_server.pid
+ics_server.log
 
 reports/*.xlsx
 reports/*.pdf
