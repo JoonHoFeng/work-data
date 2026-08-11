@@ -90,10 +90,16 @@ if not exist "dist\Worklog\Worklog.exe" (
   exit /b 1
 )
 
+REM copy background helper next to exe
+if exist "run_exe_bg.vbs" copy /Y "run_exe_bg.vbs" "dist\Worklog\run_exe_bg.vbs" >nul
+if exist "stop.bat" copy /Y "stop.bat" "dist\Worklog\stop.bat" >nul
+
 echo.
 echo ========================================
 echo   BUILD OK
 echo   Run: dist\Worklog\Worklog.exe
+echo   Background: dist\Worklog\run_exe_bg.vbs
+echo   Stop: dist\Worklog\stop.bat
 echo   Copy the whole folder: dist\Worklog
 echo   DB path: next to exe, data\worklog.db
 echo ========================================

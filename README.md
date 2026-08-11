@@ -116,8 +116,29 @@ dist\Worklog\_internal\    ← 依赖（勿删，整夹一起拷贝）
 | 分发方式 | 拷贝整个 `dist\Worklog` 文件夹，不要只拷一个 exe |
 | 数据位置 | 与 `Worklog.exe` 同目录下的 `data\worklog.db` |
 | 首次启动 | 稍慢，会自动开浏览器访问本机端口 |
-| 停止 | 关闭黑色控制台窗口即可 |
+| 停止 | 关闭黑色控制台窗口，或运行 `stop.bat` |
 | 体积 | 约数百 MB（含 Python + Streamlit） |
+
+### Windows 后台运行
+
+**A. 源码模式**（项目根目录）：
+
+```bat
+run_bg.bat
+stop.bat
+```
+
+- `run_bg.bat`：无黑窗口后台启动，并打开浏览器  
+- 日志：`streamlit.log`  
+- `stop.bat`：结束进程  
+
+**B. 已打包 exe**：
+
+1. 把 `run_exe_bg.vbs` 复制到 `dist\Worklog\`（与 `Worklog.exe` 同目录）  
+2. 双击 `run_exe_bg.vbs`（隐藏控制台后台跑）  
+3. 停止：运行项目里的 `stop.bat`，或任务管理器结束 `Worklog.exe`  
+
+开机自启（可选）：`Win+R` → `shell:startup`，把 `run_exe_bg.vbs` 的快捷方式放进去。
 
 开发调试也可用：
 

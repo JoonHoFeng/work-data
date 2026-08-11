@@ -38,9 +38,14 @@ if errorlevel 1 goto FAIL
 
 if not exist "dist\Worklog\Worklog.exe" goto FAIL
 
+if exist "run_exe_bg.vbs" copy /Y "run_exe_bg.vbs" "dist\Worklog\run_exe_bg.vbs" >nul
+if exist "stop.bat" copy /Y "stop.bat" "dist\Worklog\stop.bat" >nul
+
 echo.
 echo BUILD OK
 echo Run: dist\Worklog\Worklog.exe
+echo Background: dist\Worklog\run_exe_bg.vbs
+echo Stop: dist\Worklog\stop.bat
 echo Copy whole folder: dist\Worklog
 echo.
 if exist "dist\Worklog" explorer "dist\Worklog"
