@@ -18,11 +18,48 @@ from paths import app_base_dir, bundle_dir, ensure_runtime_dirs
 
 ROOT = ensure_runtime_dirs()
 _BUNDLE = bundle_dir()
-sys.path.insert(0, str(_BUNDLE))
-sys.path.insert(0, str(ROOT))
+# 打包后 scripts 在 _MEIPASS/scripts；开发时在项目根/scripts
+for _p in (_BUNDLE, _BUNDLE / "scripts", ROOT, ROOT / "scripts"):
+    _ps = str(_p)
+    if _p.exists() and _ps not in sys.path:
+        sys.path.insert(0, _ps)
 # 工作目录固定到可写根目录，便于 data/reports 相对路径
 import os as _os
 _os.chdir(ROOT)
+
+
+def _load_generate_monthly_report():
+    """兼容开发 import 与 PyInstaller 打包路径。"""
+    import importlib
+    import importlib.util
+
+    errors = []
+    for mod_name in ("scripts.generate_report", "generate_report"):
+        try:
+            return importlib.import_module(mod_name).generate_monthly_report
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{mod_name}: {e}")
+
+    # 直接按文件路径加载
+    candidates = [
+        _BUNDLE / "scripts" / "generate_report.py",
+        _BUNDLE / "generate_report.py",
+        ROOT / "scripts" / "generate_report.py",
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("generate_report", path)
+            mod = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(mod)
+            return mod.generate_monthly_report
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{path}: {e}")
+
+    raise ImportError("无法加载 generate_monthly_report: " + " | ".join(errors))
+
 
 from db import (
     init_db, add_work_items, get_entries, update_entry, delete_entry,
@@ -48,11 +85,7 @@ from ui_helpers import (
     format_event_time, short_cal_event_name,
     sync_all_ical_subscriptions, maybe_auto_sync_ical,
 )
-try:
-    from scripts.generate_report import generate_monthly_report
-except ImportError:
-    sys.path.insert(0, str(ROOT / "scripts"))
-    from generate_report import generate_monthly_report
+generate_monthly_report = _load_generate_monthly_report()
 
 st.set_page_config(
     page_title="工作日志",

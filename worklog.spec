@@ -15,7 +15,10 @@ datas = [
     (str(root / "templates.py"), "."),
     (str(root / "ical_client.py"), "."),
     (str(root / "ui_helpers.py"), "."),
+    # scripts 既作为包目录，也把 generate_report 放到根，便于 import
     (str(root / "scripts"), "scripts"),
+    (str(root / "scripts" / "generate_report.py"), "."),
+    (str(root / "scripts" / "__init__.py"), "scripts"),
     (str(root / ".streamlit" / "config.toml"), ".streamlit"),
     (str(root / "data" / ".gitkeep"), "data"),
     (str(root / "reports" / ".gitkeep"), "reports"),
@@ -32,6 +35,8 @@ hiddenimports = [
     "streamlit.runtime.scriptrunner.magic_funcs",
     "pandas",
     "openpyxl",
+    "openpyxl.chart",
+    "openpyxl.styles",
     "pyarrow",
     "google.protobuf",
     "watchdog",
@@ -42,6 +47,15 @@ hiddenimports = [
     "cachetools",
     "packaging",
     "PIL",
+    "scripts",
+    "scripts.generate_report",
+    "scripts.init_db",
+    "generate_report",
+    "db",
+    "paths",
+    "templates",
+    "ical_client",
+    "ui_helpers",
 ]
 
 for pkg in ("streamlit", "altair", "jsonschema"):
