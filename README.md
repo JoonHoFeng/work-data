@@ -89,11 +89,17 @@ python3 -m unittest tests/test_core.py -v
 
 ## Windows 双击运行（打包 exe）
 
-本机是 **Windows** 时，在项目根目录双击或运行：
+本机是 **Windows** 时，在项目根目录任选一种方式打包：
 
 ```bat
+REM 方式 A：双击 / 命令提示符
 build_windows.bat
+
+REM 方式 B：PowerShell（编码更稳，推荐）
+powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
+
+> 若 bat 出现乱码或「不是内部或外部命令」：请用 **方式 B**，或确认文件是从 git 完整拉取（不要用错误编码另存 bat）。
 
 完成后得到：
 
