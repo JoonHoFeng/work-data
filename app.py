@@ -357,34 +357,49 @@ with panel_right:
             st.caption(f"当前模板：**{current_tpl['name']}**（可在「设置」中切换）")
             st.markdown(format_help_markdown(current_tpl_id))
 
-        # 待保存列表
+        # 待保存列表（不用 st.form，避免分类异常时出现「Missing Submit Button」）
         pending_key = f"pending_items_{selected_date.isoformat()}"
         if pending_key not in st.session_state:
             st.session_state[pending_key] = []
 
-        with st.form("add_work_item_form", clear_on_submit=True):
-            task_name = st.text_input(
-                "任务名称 *",
-                placeholder="简短任务名，如：修复规则引擎MQTT重复消费问题",
-            )
+        if not form_categories:
+            form_categories = list(template_categories(current_tpl_id) or template_categories(TEMPLATE_DEV))
+            if not form_categories:
+                form_categories = ["其他"]
+            st.warning("未读到分类配置，已使用默认列表。可到「设置」应用模板。")
 
-            activity_type = st.selectbox(
-                f"{current_tpl['label']} *",
-                options=form_categories,
-                help=f"当前为「{current_tpl['name']}」模板；可在设置中切换研发/测试固定模板",
-            )
-
-            hours = st.number_input(
-                "工作时长 (h)", min_value=0.1, max_value=12.0, value=1.5, step=0.5, format="%.1f"
-            )
-
-            work_content = st.text_area(
-                "工作内容",
-                height=70,
-                placeholder="详细描述本次工作具体内容...",
-            )
-
-            add_clicked = st.form_submit_button("➕ 添加到待保存列表", type="primary", width="stretch")
+        task_name = st.text_input(
+            "任务名称 *",
+            placeholder="简短任务名，如：修复规则引擎MQTT重复消费问题",
+            key=f"task_name_{selected_date}",
+        )
+        activity_type = st.selectbox(
+            f"{current_tpl['label']} *",
+            options=form_categories,
+            help=f"当前为「{current_tpl['name']}」模板；可在设置中切换研发/测试固定模板",
+            key=f"activity_type_{selected_date}",
+        )
+        hours = st.number_input(
+            "工作时长 (h)",
+            min_value=0.1,
+            max_value=12.0,
+            value=1.5,
+            step=0.5,
+            format="%.1f",
+            key=f"hours_{selected_date}",
+        )
+        work_content = st.text_area(
+            "工作内容",
+            height=70,
+            placeholder="详细描述本次工作具体内容...",
+            key=f"work_content_{selected_date}",
+        )
+        add_clicked = st.button(
+            "➕ 添加到待保存列表",
+            type="primary",
+            width="stretch",
+            key=f"add_pending_{selected_date}",
+        )
 
         if add_clicked:
             if not task_name or not str(task_name).strip():
@@ -396,6 +411,8 @@ with panel_right:
                     "category": activity_type,
                     "notes": str(work_content).strip() if work_content else "",
                 })
+                st.success("已加入待保存列表")
+                st.rerun()
 
         # 预览待保存列表
         if st.session_state[pending_key]:
@@ -936,14 +953,14 @@ with panel_right:
             "同步后会在左侧、今日/本周/本月中显示。支持 `https://` 与 `webcal://`。"
         )
 
-        with st.form("add_ical_sub_form", clear_on_submit=True):
-            sub_name = st.text_input("显示名称", placeholder="例如：团队会议 / 节假日")
-            sub_url = st.text_input(
-                "ICS 订阅链接 *",
-                placeholder="https://…/calendar.ics  或  webcal://…",
-            )
-            sub_color = st.color_picker("标记颜色", value="#2563eb")
-            add_sub = st.form_submit_button("➕ 添加并同步", type="primary", width="stretch")
+        sub_name = st.text_input("显示名称", placeholder="例如：团队会议 / 节假日", key="ical_sub_name")
+        sub_url = st.text_input(
+            "ICS 订阅链接 *",
+            placeholder="https://calendar.ics 或 webcal://...",
+            key="ical_sub_url",
+        )
+        sub_color = st.color_picker("标记颜色", value="#2563eb", key="ical_sub_color")
+        add_sub = st.button("➕ 添加并同步", type="primary", width="stretch", key="ical_sub_add")
 
         if add_sub:
             if not sub_url or not str(sub_url).strip():
@@ -963,7 +980,6 @@ with panel_right:
                     st.success(f"已订阅「{name}」，同步 {n} 条日程")
                     st.rerun()
                 except Exception as e:  # noqa: BLE001
-                    # 若已插入订阅则记错误
                     try:
                         subs_now = list_ical_subscriptions()
                         hit = next((s for s in subs_now if s["url"] == url), None)
