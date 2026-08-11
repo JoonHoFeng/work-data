@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 import calendar
 from pathlib import Path
+from typing import Dict
 import sys
 
 # 确保能导入本地模块
@@ -18,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 from db import (
     init_db, add_work_items, get_entries, update_entry, delete_entry,
-    get_daily_summary, get_weekly_completed, get_category_breakdown,
-    get_highlights, get_all_categories, set_categories,
+    get_daily_summary, get_category_breakdown,
+    get_all_categories, set_categories,
     get_daily_target_hours, set_config, backup_database,
     get_activity_template, apply_activity_template,
     list_ical_subscriptions, add_ical_subscription, delete_ical_subscription,
@@ -36,8 +37,7 @@ from templates import (
     template_categories,
 )
 from ui_helpers import (
-    STATUS_DISPLAY, STATUS_OPTIONS, STATUS_REVERSE,
-    get_week_start, format_hours, status_badge,
+    get_week_start, format_hours,
     format_event_time, short_cal_event_name,
     sync_all_ical_subscriptions, maybe_auto_sync_ical,
 )
@@ -338,16 +338,6 @@ with panel_right:
                 "工作时长 (h)", min_value=0.1, max_value=12.0, value=1.5, step=0.5, format="%.1f"
             )
 
-            sc1, sc2 = st.columns(2)
-            with sc1:
-                status_label = st.selectbox(
-                    "状态 *",
-                    options=STATUS_OPTIONS,
-                    index=0,
-                )
-            with sc2:
-                is_highlight = st.checkbox("标记为亮点 ★", value=False)
-
             work_content = st.text_area(
                 "工作内容",
                 height=70,
@@ -364,9 +354,7 @@ with panel_right:
                     "description": str(task_name).strip(),
                     "hours": float(hours),
                     "category": activity_type,
-                    "status": STATUS_REVERSE.get(status_label, "done"),
                     "notes": str(work_content).strip() if work_content else "",
-                    "is_highlight": bool(is_highlight),
                 })
 
         # 预览待保存列表
@@ -374,14 +362,10 @@ with panel_right:
             st.markdown(f"**待保存记录（{len(st.session_state[pending_key])} 条）**")
 
             pending_df = pd.DataFrame(st.session_state[pending_key]).copy()
-            pending_df["status_disp"] = pending_df["status"].map(STATUS_DISPLAY)
-            pending_df["亮点"] = pending_df["is_highlight"].map(lambda x: "★" if x else "")
-
-            show_df = pending_df[["description", "hours", "category", "status_disp", "亮点", "notes"]].rename(columns={
+            show_df = pending_df[["description", "hours", "category", "notes"]].rename(columns={
                 "description": "任务名称",
                 "hours": "时长(h)",
                 "category": "活动类型",
-                "status_disp": "状态",
                 "notes": "工作内容",
             })
             st.dataframe(show_df, width="stretch", hide_index=True)
@@ -396,9 +380,7 @@ with panel_right:
                             "description": it["description"],
                             "hours": it["hours"],
                             "category": it["category"],
-                            "status": it["status"],
                             "notes": it["notes"],
-                            "is_highlight": it["is_highlight"],
                         })
                     ids = add_work_items(items)
                     st.success(f"🎉 成功保存 {len(ids)} 条记录！")
@@ -421,33 +403,24 @@ with panel_right:
         st.subheader("📋 今日已记录")
         target_h = get_daily_target_hours()
         if not today_df.empty:
-            display_df = today_df[["id", "description", "hours", "category", "status", "notes", "is_highlight"]].copy()
-            display_df["status"] = display_df["status"].apply(status_badge)
-            display_df["亮点"] = display_df["is_highlight"].apply(lambda x: "★" if x else "")
+            display_df = today_df[["id", "description", "hours", "category", "notes"]].copy()
             display_df = display_df.rename(columns={
-                "description": "任务名称", "hours": "时长(h)", "category": "分类",
-                "status": "状态", "notes": "备注", "is_highlight": "hl",
+                "description": "任务名称", "hours": "时长(h)", "category": "分类", "notes": "备注",
             })
-            st.dataframe(
-                display_df.drop(columns=["hl"], errors="ignore"),
-                width="stretch",
-                hide_index=True,
-            )
+            st.dataframe(display_df, width="stretch", hide_index=True)
 
             total = float(today_df["hours"].sum())
-            done_cnt = int((today_df["status"] == "done").sum())
+            n_items = len(today_df)
             if total > target_h:
                 st.warning(
-                    f"今日合计 **{total:.1f}h**（已超过目标 {target_h:g}h） | "
-                    f"已完成 {done_cnt}/{len(today_df)} 项"
+                    f"今日合计 **{total:.1f}h**（已超过目标 {target_h:g}h） | {n_items} 条"
                 )
             elif total > target_h * 0.9:
                 st.info(
-                    f"今日合计 **{total:.1f}h**（接近目标 {target_h:g}h） | "
-                    f"已完成 {done_cnt}/{len(today_df)} 项"
+                    f"今日合计 **{total:.1f}h**（接近目标 {target_h:g}h） | {n_items} 条"
                 )
             else:
-                st.info(f"今日合计 **{total:.1f}h** / 目标 {target_h:g}h | 已完成 {done_cnt}/{len(today_df)} 项")
+                st.info(f"今日合计 **{total:.1f}h** / 目标 {target_h:g}h | {n_items} 条")
 
             # 快速改删（无需跳转历史页）
             with st.expander("✏️ 快速编辑 / 删除今日条目", expanded=False):
@@ -471,14 +444,9 @@ with panel_right:
                 cats = get_all_categories()
                 cat_idx = cats.index(row["category"]) if row["category"] in cats else 0
                 e_cat = st.selectbox("分类", options=cats, index=cat_idx, key=f"te_cat_{pick}")
-                st_idx = list(STATUS_DISPLAY.keys()).index(row["status"]) if row["status"] in STATUS_DISPLAY else 0
-                e_status = st.selectbox(
-                    "状态", options=STATUS_OPTIONS, index=st_idx, key=f"te_st_{pick}",
-                )
                 e_notes = st.text_input(
                     "备注", value=str(row["notes"] or ""), key=f"te_notes_{pick}",
                 )
-                e_hl = st.checkbox("亮点", value=bool(row["is_highlight"]), key=f"te_hl_{pick}")
                 bc1, bc2 = st.columns(2)
                 with bc1:
                     if st.button("💾 保存修改", type="primary", width="stretch", key=f"te_save_{pick}"):
@@ -487,9 +455,7 @@ with panel_right:
                             description=e_desc.strip(),
                             hours=float(e_hours),
                             category=e_cat,
-                            status=STATUS_REVERSE.get(e_status, "done"),
                             notes=e_notes.strip(),
-                            is_highlight=bool(e_hl),
                         )
                         st.success("已更新")
                         st.rerun()
@@ -553,18 +519,17 @@ with panel_right:
             st.bar_chart(daily_sum.set_index("work_date")["total_hours"], width="stretch")
 
         # 本周完成事项
-        st.subheader("本周已完成事项（亮点优先）")
-        completed = get_weekly_completed(week_start.isoformat())
-        if not completed.empty:
+        st.subheader("本周工作事项")
+        if not week_df.empty:
             show_cols = ["work_date", "description", "hours", "category", "notes"]
             st.dataframe(
-                completed[show_cols].rename(columns={
+                week_df[show_cols].rename(columns={
                     "work_date": "日期", "description": "工作内容", "hours": "时长", "category": "分类", "notes": "备注"
                 }),
                 width="stretch", hide_index=True
             )
         else:
-            st.info("本周暂无已完成记录")
+            st.info("本周暂无记录")
 
         st.divider()
         st.subheader("📅 本周外部日历")
@@ -606,7 +571,6 @@ with panel_right:
         month_entries = get_entries(month_start.isoformat(), month_end.isoformat())
         month_daily = get_daily_summary(month_start.isoformat(), month_end.isoformat())
         cat_break = get_category_breakdown(month_start.isoformat(), month_end.isoformat())
-        highlights = get_highlights(month_start.isoformat(), month_end.isoformat())
 
         # 关键指标
         m_total = month_entries["hours"].sum() if not month_entries.empty else 0
@@ -614,12 +578,13 @@ with panel_right:
         m_avg = m_total / m_days if m_days > 0 else 0
         m_target = get_daily_target_hours() * m_days
         m_diff = m_total - m_target
+        m_items = len(month_entries) if not month_entries.empty else 0
 
         cc1, cc2, cc3, cc4 = st.columns(4)
         cc1.metric("本月总工时", f"{m_total:.1f}h", delta=f"{m_diff:+.1f}h vs 目标")
         cc2.metric("工作天数", f"{m_days}")
         cc3.metric("日均工时", f"{m_avg:.1f}h")
-        cc4.metric("本月亮点", len(highlights))
+        cc4.metric("工作条目", m_items)
 
         # 趋势 + 分类
         col_left, col_right = st.columns([2, 1])
@@ -630,17 +595,18 @@ with panel_right:
             if not cat_break.empty:
                 st.bar_chart(cat_break.set_index("category")["hours"])
 
-        # Top 完成
-        st.subheader("本月亮点 / 重要完成事项")
-        if not highlights.empty:
+        # Top 事项（按时长）
+        st.subheader("本月工作事项（按时长）")
+        if not month_entries.empty:
+            top_m = month_entries.sort_values("hours", ascending=False).head(15)
             st.dataframe(
-                highlights[["work_date", "description", "hours", "category"]].rename(
+                top_m[["work_date", "description", "hours", "category"]].rename(
                     columns={"work_date": "日期", "description": "内容", "hours": "时长", "category": "分类"}
                 ),
                 width="stretch", hide_index=True
             )
         else:
-            st.info("本月暂无标记为亮点的记录（可在录入时勾选）")
+            st.info("本月暂无记录")
 
         st.divider()
         st.subheader("📅 本月外部日历")
@@ -720,21 +686,16 @@ with panel_right:
                     del st.session_state[k]
         else:
             # 准备基础 DataFrame（用于 data_editor）
-            base_df = hist_df[["id", "work_date", "description", "hours", "category", "status", "notes", "is_highlight"]].copy()
+            base_df = hist_df[["id", "work_date", "description", "hours", "category", "notes"]].copy()
             base_df = base_df.rename(columns={
                 "id": "ID",
                 "work_date": "日期",
                 "description": "工作内容",
                 "hours": "时长(h)",
                 "category": "分类",
-                "status": "状态",
                 "notes": "备注",
-                "is_highlight": "亮点",
             })
             base_df["删除?"] = False
-
-            # 转成用户友好的状态显示名
-            base_df["状态"] = base_df["状态"].map(STATUS_DISPLAY).fillna(base_df["状态"])
 
             cats = get_all_categories()
 
@@ -744,9 +705,7 @@ with panel_right:
                 "工作内容": st.column_config.TextColumn("工作内容", width="large"),
                 "时长(h)": st.column_config.NumberColumn("时长(h)", min_value=0.1, max_value=12.0, step=0.5, format="%.1f"),
                 "分类": st.column_config.SelectboxColumn("分类", options=cats, required=True),
-                "状态": st.column_config.SelectboxColumn("状态", options=STATUS_OPTIONS),
                 "备注": st.column_config.TextColumn("备注"),
-                "亮点": st.column_config.CheckboxColumn("亮点 ★"),
                 "删除?": st.column_config.CheckboxColumn("删除?", help="勾选后保存时会永久删除该记录"),
             }
 
@@ -784,14 +743,11 @@ with panel_right:
                     continue
                 orig = orig_row.iloc[0]
 
-                new_status = STATUS_REVERSE.get(row["状态"], row["状态"])
                 if (
                     str(row["工作内容"]).strip() != str(orig["工作内容"]).strip() or
                     float(row["时长(h)"]) != float(orig["时长(h)"]) or
                     row["分类"] != orig["分类"] or
-                    new_status != orig["状态"] or
-                    str(row["备注"]).strip() != str(orig.get("备注", "")).strip() or
-                    bool(row["亮点"]) != bool(orig["亮点"])
+                    str(row["备注"]).strip() != str(orig.get("备注", "")).strip()
                 ):
                     to_update += 1
 
@@ -823,25 +779,19 @@ with panel_right:
                             continue
                         orig = orig_row.iloc[0]
 
-                        new_status = STATUS_REVERSE.get(row["状态"], row["状态"])
-
                         # 只有真正发生变化的才更新
                         if (
                             str(row["工作内容"]).strip() != str(orig["工作内容"]).strip() or
                             float(row["时长(h)"]) != float(orig["时长(h)"]) or
                             row["分类"] != orig["分类"] or
-                            new_status != orig["状态"] or
-                            str(row["备注"]).strip() != str(orig.get("备注", "")).strip() or
-                            bool(row["亮点"]) != bool(orig["亮点"])
+                            str(row["备注"]).strip() != str(orig.get("备注", "")).strip()
                         ):
                             update_entry(
                                 rid,
                                 description=str(row["工作内容"]).strip(),
                                 hours=float(row["时长(h)"]),
                                 category=row["分类"],
-                                status=new_status,
                                 notes=str(row["备注"]).strip() if pd.notna(row["备注"]) else "",
-                                is_highlight=bool(row["亮点"]),
                             )
                             actual_updates += 1
 

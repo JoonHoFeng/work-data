@@ -35,14 +35,14 @@ def build_seed_entries() -> list:
     start = today - timedelta(days=today.weekday() + 14)
     entries = []
     samples = [
-        ("完成模块接口联调与自测", 3.5, 0, 1),
-        ("参与需求/方案评审会", 1.5, 1, 0),
-        ("排查线上问题并验证修复", 2.0, 2, 1),
-        ("整理本周进展与风险", 1.0, 3, 0),
-        ("编写/更新设计或测试文档", 2.5, 4, 0),
-        ("团队分享或知识库沉淀", 1.5, 5, 1),
-        ("环境准备与数据构造", 2.0, 6, 0),
-        ("回归验证关键路径", 3.0, 0, 0),
+        ("完成模块接口联调与自测", 3.5, 0),
+        ("参与需求/方案评审会", 1.5, 1),
+        ("排查线上问题并验证修复", 2.0, 2),
+        ("整理本周进展与风险", 1.0, 3),
+        ("编写/更新设计或测试文档", 2.5, 4),
+        ("团队分享或知识库沉淀", 1.5, 5),
+        ("环境准备与数据构造", 2.0, 6),
+        ("回归验证关键路径", 3.0, 0),
     ]
     d = start
     for i in range(10):
@@ -50,14 +50,12 @@ def build_seed_entries() -> list:
             d += timedelta(days=1)
             continue
         for j in range(2):
-            desc, hours, ci, hi = samples[(i + j) % len(samples)]
+            desc, hours, ci = samples[(i + j) % len(samples)]
             entries.append({
                 "work_date": d.isoformat(),
                 "description": f"{desc}（示例）",
                 "hours": hours,
                 "category": c[ci % len(c)],
-                "status": "done" if j == 0 else "in_progress",
-                "is_highlight": hi,
                 "notes": "init_db --seed 生成的示例数据，可删",
             })
         d += timedelta(days=1)

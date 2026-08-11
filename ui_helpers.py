@@ -16,14 +16,6 @@ from db import (
 )
 from ical_client import sync_subscription_from_url
 
-STATUS_DISPLAY = {
-    "done": "✅ 已完成",
-    "in_progress": "🔄 进行中",
-    "planned": "📌 计划中",
-}
-STATUS_OPTIONS = list(STATUS_DISPLAY.values())
-STATUS_REVERSE = {v: k for k, v in STATUS_DISPLAY.items()}
-
 # 旧分类 → 研发模板映射（历史数据清洗）
 LEGACY_CATEGORY_MAP = {
     "开发": "开发实现类",
@@ -42,10 +34,6 @@ def get_week_start(d: date) -> date:
 
 def format_hours(h: float) -> str:
     return f"{h:.1f}h"
-
-
-def status_badge(status: str) -> str:
-    return STATUS_DISPLAY.get(status, status)
 
 
 def format_event_time(start_at: str, end_at: str, all_day: bool) -> str:

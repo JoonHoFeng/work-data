@@ -278,18 +278,17 @@ def get_weekly_completed(week_start: str, db_path: Optional[Path] = None) -> pd.
     if df.empty:
         return df
     done = df[df["status"] == "done"].copy()
-    done = done.sort_values(["is_highlight", "hours"], ascending=[False, False])
+    done = done.sort_values(["hours", "work_date"], ascending=[False, True])
     return done
 
 
 def get_category_breakdown(start_date: str, end_date: str, db_path: Optional[Path] = None) -> pd.DataFrame:
-    """分类统计（仅统计 done + in_progress）"""
+    """分类统计"""
     conn = get_conn(db_path)
     df = pd.read_sql_query("""
         SELECT category, SUM(hours) as hours, COUNT(*) as count
         FROM entries
         WHERE work_date BETWEEN ? AND ?
-          AND status IN ('done', 'in_progress')
         GROUP BY category
         ORDER BY hours DESC
     """, conn, params=[start_date, end_date])
