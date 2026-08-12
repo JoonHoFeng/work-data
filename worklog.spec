@@ -15,6 +15,7 @@ datas = [
     (str(root / "templates.py"), "."),
     (str(root / "ical_client.py"), "."),
     (str(root / "ui_helpers.py"), "."),
+    (str(root / "data_io.py"), "."),
     # scripts 既作为包目录，也把 generate_report 放到根，便于 import
     (str(root / "scripts"), "scripts"),
     (str(root / "scripts" / "generate_report.py"), "."),
@@ -56,6 +57,7 @@ hiddenimports = [
     "templates",
     "ical_client",
     "ui_helpers",
+    "data_io",
 ]
 
 for pkg in ("streamlit", "altair", "jsonschema"):

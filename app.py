@@ -85,6 +85,15 @@ from ui_helpers import (
     format_event_time, short_cal_event_name,
     sync_all_ical_subscriptions, maybe_auto_sync_ical,
 )
+from data_io import (
+    export_entries_df,
+    export_to_csv_bytes,
+    export_to_xlsx_bytes,
+    read_upload_to_df,
+    normalize_import_df,
+    import_entries,
+    download_template_csv_bytes,
+)
 generate_monthly_report = _load_generate_monthly_report()
 
 st.set_page_config(
@@ -1049,6 +1058,110 @@ with panel_right:
                 else:
                     st.success(f"全部成功：{result['ok']} 个源，{result['events']} 条事件")
                 st.rerun()
+
+        st.divider()
+        st.subheader("📤 数据导出")
+        st.caption("导出工时明细为 CSV / Excel，可在 Excel 中编辑后再导入。")
+
+        exp_c1, exp_c2 = st.columns(2)
+        with exp_c1:
+            exp_start = st.date_input(
+                "导出起始日期",
+                value=date.today().replace(month=1, day=1) if date.today().month >= 1 else date.today(),
+                key="export_start",
+            )
+        with exp_c2:
+            exp_end = st.date_input("导出结束日期", value=date.today(), key="export_end")
+
+        if exp_start > exp_end:
+            st.warning("起始日期不能晚于结束日期")
+        else:
+            exp_df = export_entries_df(exp_start.isoformat(), exp_end.isoformat())
+            st.caption(f"范围内共 **{len(exp_df)}** 条记录")
+            if not exp_df.empty:
+                st.dataframe(exp_df, width="stretch", hide_index=True)
+
+            dl1, dl2, dl3 = st.columns(3)
+            with dl1:
+                st.download_button(
+                    "⬇️ 导出 CSV",
+                    data=export_to_csv_bytes(exp_df),
+                    file_name=f"工时导出_{exp_start}_{exp_end}.csv",
+                    mime="text/csv",
+                    width="stretch",
+                    disabled=exp_df.empty,
+                    key="dl_csv",
+                )
+            with dl2:
+                st.download_button(
+                    "⬇️ 导出 Excel",
+                    data=export_to_xlsx_bytes(exp_df),
+                    file_name=f"工时导出_{exp_start}_{exp_end}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                    disabled=exp_df.empty,
+                    key="dl_xlsx",
+                )
+            with dl3:
+                st.download_button(
+                    "📄 下载导入模板",
+                    data=download_template_csv_bytes(),
+                    file_name="工时导入模板.csv",
+                    mime="text/csv",
+                    width="stretch",
+                    key="dl_tpl",
+                )
+
+        st.divider()
+        st.subheader("📥 数据导入")
+        st.caption(
+            "支持 CSV / Excel。表头：`日期, 任务名称, 时长(h), 分类, 备注`。"
+            "旧分类名（如「开发」）会自动映射到当前模板分类。"
+        )
+        import_mode = st.radio(
+            "导入模式",
+            options=["追加到现有数据", "清空后全量替换"],
+            horizontal=True,
+            key="import_mode",
+            help="「清空后全量替换」会删除全部工时记录再导入，请先导出备份。",
+        )
+        up = st.file_uploader(
+            "选择文件",
+            type=["csv", "xlsx", "xls"],
+            key="import_file",
+        )
+        if up is not None:
+            try:
+                raw_df = read_upload_to_df(up.name, up.getvalue())
+                st.markdown("**预览（前 20 行）**")
+                st.dataframe(raw_df.head(20), width="stretch", hide_index=True)
+                items, errs = normalize_import_df(raw_df)
+                if errs:
+                    st.warning(f"校验提示 {len(errs)} 条（部分行可能已跳过）：")
+                    for e in errs[:15]:
+                        st.caption(f"· {e}")
+                    if len(errs) > 15:
+                        st.caption(f"… 另有 {len(errs) - 15} 条")
+                st.info(f"可导入 **{len(items)}** 条有效记录")
+                if st.button(
+                    "🚀 确认导入",
+                    type="primary",
+                    width="stretch",
+                    disabled=(len(items) == 0),
+                    key="import_confirm",
+                ):
+                    mode = "replace" if import_mode.startswith("清空") else "append"
+                    if mode == "replace":
+                        # 导入前自动备份
+                        backup_database(ROOT / "reports", keep=10)
+                    result = import_entries(items, mode=mode)
+                    st.success(
+                        f"导入完成：写入 {result['inserted']} 条"
+                        + ("（已清空旧数据，并自动备份库）" if mode == "replace" else "（追加）")
+                    )
+                    st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"读取文件失败：{e}")
 
         st.divider()
         st.subheader("数据备份")
