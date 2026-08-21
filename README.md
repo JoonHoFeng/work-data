@@ -1,160 +1,82 @@
-# 工作日志管理系统 (Worklog)
+# Worklog 轻量工作日志
 
-个人每日工时 + 工作内容追踪工具。  
-支持**日 / 周 / 月**复盘、研发/测试**活动类型双模板**、**外部 iCal/ICS 订阅**（节假日等显示在左侧日历）、一键 **Excel 月报**。
+面向个人和小团队的轻量工时记录工具，针对 2核2G、同时运行其他服务的 Linux/ECS 环境设计。
 
-## 核心功能
+## 保留的功能
 
-- 📝 **每日录入**：任务名、活动类型、时长、工作内容；可连加多条再批量保存
-- ✏️ **今日快速改删**：无需跳历史页即可编辑/删除当日条目
-- 📊 **今日看板**：总工时 vs 目标（超标提示）、条目列表
-- 📆 **本周 / 本月**：工时图表、完成事项、外部日程列表
-- 📅 **外部日历订阅**：粘贴 ICS 链接；节假日/补班直接显示在左侧月历格子上
-- 🎭 **固定模板**：设置中切换「研发人员 / 测试人员」7 类活动类型及白话说明
-- 📤 **Excel 月报**：多 Sheet 明细 + 清单 + 统计 + 图表
-- 💾 **数据备份**：一键备份到 `reports/`（保留最近 10 份）
-- 📤📥 **数据导入/导出**：CSV / Excel 明细导出；支持追加或清空后全量导入
+- 多人员切换，研发/测试活动模板
+- 按日期填报、修改和删除工作记录
+- 月历工时、当日/本周/本月汇总、分类统计
+- 历史记录筛选
+- CSV 导入导出
+- SQLite 原生一致性备份（保留最近 10 份）
+- 可选共享访问密码、CSRF 防护、健康检查
 
-## 快速开始
+## 资源设计
 
-### 环境要求
-- Python 3.9+
-- macOS / Linux / Windows
+- Flask + 原生 SQLite + 原生 CSV，无 pandas、Streamlit、openpyxl
+- Gunicorn 默认 1 worker / 2 threads
+- systemd：`MemoryHigh=220M`、`MemoryMax=320M`、最多使用 1 核
+- SQLite WAL 模式，适合低并发小团队使用
 
-### 安装与启动
+## 本地启动
+
+要求 Python 3.9+：
 
 ```bash
-cd 工作日志路径
-
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-# 首次初始化（默认不插演示数据）
-python3 scripts/init_db.py
-# 可选：空库时插入示例 → python3 scripts/init_db.py --seed
-
-./run.sh          # 前台
-./run.sh bg       # 后台
-./stop.sh         # 停止
+./run.sh
 ```
 
-访问：http://localhost:8501  
+默认只监听 `127.0.0.1:8501`。后台运行：
 
-`./run.sh` 会自动对 Streamlit 前端打**中文菜单补丁**（改 venv 内静态资源；升级 streamlit 后重启即可再打）。
+```bash
+./run.sh bg
+./stop.sh
+```
 
-## 日常使用
+可选环境变量：
 
-1. 打开 App →「今日」
-2. 左侧日历选日期（有节假日的格子会显示简称，如「国庆节」）
-3. 填报任务 → 添加到列表 → 保存
-4. 设置里可切换 **研发 / 测试** 模板、订阅 ICS、备份数据库
-5. 月底「本月」→ 导出 Excel 复盘
+```bash
+export WORKLOG_PASSWORD='访问密码'
+export WORKLOG_SECRET_KEY='固定随机密钥'
+export WORKLOG_ADDRESS='127.0.0.1'
+export WORKLOG_PORT='8501'
+```
 
-## 页面说明
+浏览器访问 <http://127.0.0.1:8501>，健康检查为 `/healthz`。
 
-| 区域 | 内容 |
-|------|------|
-| 左侧 | 月历（含外部日程标记）+ 快速统计 + 同步日历 |
-| 今日 | 录入表单 + 今日记录 + 快速编辑删除 |
-| 本周 | 工时柱图 + 完成事项 + 外部日程 |
-| 本月 | 趋势/分类 + 完成事项 + 外部日程 + Excel 导出 |
-| 历史编辑 | 筛选 + 表格批量改删 |
-| 设置 | 活动类型模板、分类微调、目标工时、ICS 订阅、导入/导出、备份 |
+## 部署到阿里云 ECS
 
-## 活动类型模板
+建议让应用仅监听本机地址，通过服务器已有的 Nginx/Caddy 提供 HTTPS：
 
-| 模板 | 类型 |
-|------|------|
-| 研发人员 | 日常事务类、问题治理类、开发实现类、方案设计类、技术攻关类、项目管理类、赋能建设类 |
-| 测试人员 | 用例设计、用例执行、环境准备、缺陷跟进、协作响应、赋能建设、日常事务 |
+```bash
+WORKLOG_HOST=服务器IP \
+WORKLOG_USER=root \
+WORKLOG_PASSWORD='访问密码' \
+./scripts/deploy_ecs.sh
+```
 
-每类在「今日」展开说明中含：干什么用的 / 典型场景 / 别往这里填。
+脚本会部署到 `/opt/worklog`，创建低权限用户 `worklog`，安装 systemd 服务并保留服务器已有数据库。
 
-## 外部 ICS
+Nginx 反向代理示例：
 
-设置 → 订阅外部日历 → 粘贴 `https://…ics` 或 `webcal://…`。  
-支持 Google / Outlook / 节假日源等。每天首次打开会**自动同步一次**；也可手动点「同步日历」。
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8501;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
-## 数据
+如果必须直接通过安全组访问，可在部署时设置 `WORKLOG_ADDRESS=0.0.0.0`，但应限制安全组来源 IP。
 
-- SQLite：`data/worklog.db`（本地，不入库）
+## 数据与维护
+
+- 主数据库：`data/worklog.db`
 - 备份：`reports/worklog_backup_*.db`
-- 迁移：旧分类名（开发/会议/…）启动时会映射到研发 7 类
+- 查看日志：`journalctl -u worklog -f`
+- 重启服务：`systemctl restart worklog`
+- 测试：`python -m unittest discover -s tests -v`
 
-## 测试
-
-```bash
-python3 -m unittest tests/test_core.py -v
-```
-
-## Windows 双击运行（打包 exe）
-
-本机是 **Windows** 时，在项目根目录任选一种方式打包：
-
-```bat
-REM 方式 A：双击 / 命令提示符
-build_windows.bat
-
-REM 方式 B：PowerShell（编码更稳，推荐）
-powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
-```
-
-> 若 bat 出现乱码或「不是内部或外部命令」：请用 **方式 B**，或确认文件是从 git 完整拉取（不要用错误编码另存 bat）。
-
-完成后得到：
-
-```
-dist\Worklog\Worklog.exe   ← 双击启动
-dist\Worklog\_internal\    ← 依赖（勿删，整夹一起拷贝）
-```
-
-说明：
-
-| 项 | 说明 |
-|----|------|
-| 打包环境 | **必须在 Windows** 上构建（当前 Mac 无法直接产出可用 Win  exe） |
-| 分发方式 | 拷贝整个 `dist\Worklog` 文件夹，不要只拷一个 exe |
-| 数据位置 | 与 `Worklog.exe` 同目录下的 `data\worklog.db` |
-| 首次启动 | 稍慢，会自动开浏览器访问本机端口 |
-| 停止 | 关闭黑色控制台窗口，或运行 `stop.bat` |
-| 体积 | 约数百 MB（含 Python + Streamlit） |
-
-### Windows 后台运行
-
-**A. 源码模式**（项目根目录）：
-
-```bat
-run_bg.bat
-stop.bat
-```
-
-- `run_bg.bat`：无黑窗口后台启动，并打开浏览器  
-- 日志：`streamlit.log`  
-- `stop.bat`：结束进程  
-
-**B. 已打包 exe**：
-
-1. 把 `run_exe_bg.vbs` 复制到 `dist\Worklog\`（与 `Worklog.exe` 同目录）  
-2. 双击 `run_exe_bg.vbs`（隐藏控制台后台跑）  
-3. 停止：运行项目里的 `stop.bat`，或任务管理器结束 `Worklog.exe`  
-
-开机自启（可选）：`Win+R` → `shell:startup`，把 `run_exe_bg.vbs` 的快捷方式放进去。
-
-开发调试也可用：
-
-```bat
-python launcher.py
-```
-
-## 技术栈
-
-- Streamlit 1.50.x · pandas · SQLite · openpyxl ·（可选）PyInstaller
-
-## 版本
-
-v1.1 — 双模板、ICS 进日历、今日改删、中文菜单补丁、备份清理、旧分类迁移
-
----
-
-有问题或功能建议随时提。
+从旧 Streamlit 版本启动时会自动迁移并保留已有人员和工时数据。

@@ -1,0 +1,28 @@
+[Unit]
+Description=Lightweight Worklog
+After=network.target
+
+[Service]
+Type=simple
+User=worklog
+Group=worklog
+WorkingDirectory=/opt/worklog
+EnvironmentFile=/opt/worklog/worklog.env
+ExecStart=/opt/worklog/.venv/bin/gunicorn -c gunicorn.conf.py app:app
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# Keep the service friendly to a small shared ECS instance.
+MemoryHigh=220M
+MemoryMax=320M
+CPUQuota=100%
+TasksMax=64
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/worklog/data /opt/worklog/reports
+
+[Install]
+WantedBy=multi-user.target

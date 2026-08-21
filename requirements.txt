@@ -1,9 +1,2 @@
-# 工作日志管理系统 - 依赖
-# 安装: pip install -r requirements.txt
-
-streamlit>=1.50.0,<1.51
-pandas>=2.0.0,<3
-openpyxl>=3.1.0,<4
-
-# 仅 Windows 打包 exe 时需要:
-# pip install "pyinstaller>=6.0"
+Flask==3.1.3
+gunicorn==23.0.0

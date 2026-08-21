@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading">
+  <div><h1>每日填报</h1><p class="muted">{{ person.name }} · {{ templates[person.template_id].name }}</p></div>
+  {% include "_person_switcher.html" %}
+</div>
+
+<div class="dashboard-grid">
+  <aside class="card calendar-card">
+    <div class="calendar-nav">
+      <a href="{{ url_for('dashboard', date=prev_month) }}">‹</a>
+      <strong>{{ selected.year }}年{{ selected.month }}月</strong>
+      <a href="{{ url_for('dashboard', date=next_month) }}">›</a>
+    </div>
+    <div class="calendar weekdays">{% for item in ['一','二','三','四','五','六','日'] %}<span>{{ item }}</span>{% endfor %}</div>
+    <div class="calendar days">
+      {% for week in calendar_rows %}
+        {% for item in week %}
+          {% if item %}
+            <a class="day {{ item.level }} {% if item.selected %}selected{% endif %}" href="{{ url_for('dashboard', date=item.date) }}">
+              <b>{{ item.day }}</b><small>{% if item.hours %}{{ '%.1f'|format(item.hours) }}h{% endif %}</small>
+            </a>
+          {% else %}<span class="day blank"></span>{% endif %}
+        {% endfor %}
+      {% endfor %}
+    </div>
+    <a class="today-link" href="{{ url_for('dashboard', date=today) }}">回到今天</a>
+  </aside>
+
+  <section class="stack">
+    <div class="metrics">
+      <div class="metric"><span>当日</span><strong>{{ '%.1f'|format(day_total) }}h</strong><small>目标 {{ target }}h</small></div>
+      <div class="metric"><span>本周</span><strong>{{ '%.1f'|format(week_total) }}h</strong><small>{{ week_start }} 至 {{ week_end }}</small></div>
+      <div class="metric"><span>本月</span><strong>{{ '%.1f'|format(month_total) }}h</strong><small>{{ selected.year }}年{{ selected.month }}月</small></div>
+    </div>
+
+    <form class="card entry-form" method="post" action="{{ url_for('create_entry') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <h2>{{ selected }} 新增记录</h2>
+      <div class="form-grid">
+        <label class="wide">任务名称<input name="description" required maxlength="120" placeholder="简要说明完成的工作"></label>
+        <label>日期<input name="work_date" type="date" value="{{ selected }}" required></label>
+        <label>工时<input name="hours" type="number" min="0.1" max="24" step="0.5" value="1.0" required></label>
+        <label>活动类型<select name="category">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></label>
+        <label class="wide">备注<input name="notes" maxlength="500" placeholder="可选"></label>
+      </div>
+      <button class="primary" type="submit">保存记录</button>
+    </form>
+
+    <section class="card">
+      <div class="section-title"><h2>当日记录</h2><span>{{ day_entries|length }} 条</span></div>
+      {% if day_entries %}
+        <div class="entry-list">
+          {% for entry in day_entries %}
+            <details class="entry">
+              <summary><span><b>{{ entry.description }}</b><small>{{ entry.category }}{% if entry.notes %} · {{ entry.notes }}{% endif %}</small></span><strong>{{ entry.hours }}h</strong></summary>
+              <form method="post" action="{{ url_for('edit_entry', entry_id=entry.id) }}" class="inline-edit">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="return_to" value="{{ request.full_path }}">
+                <input name="description" value="{{ entry.description }}" required>
+                <input name="work_date" type="date" value="{{ entry.work_date }}" required>
+                <input name="hours" type="number" min="0.1" max="24" step="0.5" value="{{ entry.hours }}" required>
+                <select name="category">{% for category in categories %}<option {% if category == entry.category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select>
+                <input name="notes" value="{{ entry.notes }}" placeholder="备注">
+                <button type="submit">保存修改</button>
+              </form>
+              <form method="post" action="{{ url_for('remove_entry', entry_id=entry.id) }}" onsubmit="return confirm('确认删除这条记录？')">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="return_to" value="{{ request.full_path }}">
+                <button class="danger-link" type="submit">删除记录</button>
+              </form>
+            </details>
+          {% endfor %}
+        </div>
+      {% else %}<p class="empty-state">这一天还没有记录。</p>{% endif %}
+    </section>
+
+    <section class="card">
+      <div class="section-title"><h2>本月分类</h2><a href="{{ url_for('download_csv', start=month_start, end=month_end) }}">导出 CSV</a></div>
+      {% if month_categories %}
+        <div class="bars">{% for item in month_categories %}<div><span>{{ item.category }}</span><div class="bar"><i style="width:{{ item.percent }}%"></i></div><strong>{{ item.hours }}h</strong></div>{% endfor %}</div>
+      {% else %}<p class="empty-state">本月暂无数据。</p>{% endif %}
+    </section>
+  </section>
+</div>
+{% endblock %}

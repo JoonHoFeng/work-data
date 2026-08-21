@@ -1,377 +1,25 @@
 #!/usr/bin/env python3
-"""
-工作日志 DB 层
-- 使用标准库 sqlite3 + pandas
-- 所有日期统一用 'YYYY-MM-DD' 字符串存储
-- 支持高亮（is_highlight）用于周/月复盘重点展示
-"""
+"""SQLite data layer for the lightweight worklog application."""
 
-import sqlite3
-import pandas as pd
-from datetime import datetime, date, timedelta
-from pathlib import Path
-from typing import Optional, List, Dict, Any
+from __future__ import annotations
+
+import csv
+import io
 import json
+import sqlite3
+from contextlib import closing
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable
 
 from paths import app_base_dir, ensure_runtime_dirs
+from templates import DEFAULT_TEMPLATE_ID, get_template, template_categories
 
 ensure_runtime_dirs()
 DB_PATH = app_base_dir() / "data" / "worklog.db"
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-from templates import (  # noqa: E402
-    TEMPLATE_DEV,
-    get_template,
-    template_categories,
-)
-
-# 默认：研发人员模板
-DEFAULT_TEMPLATE_ID = TEMPLATE_DEV
+DEFAULT_PERSON_NAME = "默认"
 DEFAULT_CATEGORIES = template_categories(DEFAULT_TEMPLATE_ID)
 
-# 旧版默认分类（用于一次性迁移到研发 7 类）
-_LEGACY_DEFAULT_CATEGORIES = ["开发", "会议", "测试", "联调", "文档", "学习", "其他"]
-
-
-def get_conn(db_path: Optional[Path] = None) -> sqlite3.Connection:
-    """获取数据库连接（自动启用外键和中文支持）"""
-    path = db_path or DB_PATH
-    conn = sqlite3.connect(str(path), detect_types=sqlite3.PARSE_DECLTYPES)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")  # 更好并发（单用户也无害）
-    return conn
-
-
-def init_db(conn: Optional[sqlite3.Connection] = None) -> None:
-    """初始化表结构（幂等）"""
-    if conn is None:
-        conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            work_date TEXT NOT NULL CHECK(length(work_date)=10),
-            description TEXT NOT NULL,
-            hours REAL NOT NULL CHECK(hours > 0),
-            category TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'done' CHECK(status IN ('done','in_progress','planned')),
-            notes TEXT,
-            is_highlight INTEGER NOT NULL DEFAULT 0 CHECK(is_highlight IN (0,1)),
-            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        )
-    """)
-
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(work_date)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_status_date ON entries(status, work_date)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_entries_category ON entries(category)")
-
-    # 配置表（分类列表、目标工时等）
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS config (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    """)
-
-    # 写入默认配置（如果不存在）
-    cur.execute(
-        "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
-        ("categories", json.dumps(DEFAULT_CATEGORIES, ensure_ascii=False)),
-    )
-    cur.execute(
-        "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
-        ("daily_target_hours", "8.0"),
-    )
-    cur.execute(
-        "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
-        ("activity_template", DEFAULT_TEMPLATE_ID),
-    )
-
-    # 若仍是旧版 7 类（开发/会议/…），自动迁移为研发模板
-    cur.execute("SELECT value FROM config WHERE key = ?", ("categories",))
-    row = cur.fetchone()
-    if row:
-        try:
-            cats = json.loads(row[0])
-        except (json.JSONDecodeError, TypeError):
-            cats = None
-        if isinstance(cats, list) and cats == _LEGACY_DEFAULT_CATEGORIES:
-            cur.execute(
-                "UPDATE config SET value = ? WHERE key = ?",
-                (json.dumps(DEFAULT_CATEGORIES, ensure_ascii=False), "categories"),
-            )
-            cur.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
-                ("activity_template", DEFAULT_TEMPLATE_ID),
-            )
-
-    # 外部日历订阅（iCal/ICS → 本系统展示）
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ical_subscriptions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            url TEXT NOT NULL UNIQUE,
-            enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
-            color TEXT NOT NULL DEFAULT '#2563eb',
-            last_sync TEXT,
-            last_error TEXT,
-            event_count INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ical_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subscription_id INTEGER NOT NULL,
-            uid TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            description TEXT,
-            location TEXT,
-            start_at TEXT NOT NULL,
-            end_at TEXT NOT NULL,
-            all_day INTEGER NOT NULL DEFAULT 0 CHECK(all_day IN (0,1)),
-            event_date TEXT NOT NULL,
-            FOREIGN KEY(subscription_id) REFERENCES ical_subscriptions(id) ON DELETE CASCADE,
-            UNIQUE(subscription_id, uid, event_date, start_at)
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ical_events_date ON ical_events(event_date)")
-    cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ical_events_sub_date ON ical_events(subscription_id, event_date)"
-    )
-
-    conn.commit()
-
-    # 历史 entries 旧分类名映射（幂等，migrate 自建连接）
-    migrate_legacy_entry_categories()
-
-
-def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def add_work_items(items: List[Dict[str, Any]], db_path: Optional[Path] = None) -> List[int]:
-    """
-    批量插入工作项
-    items: [{work_date, description, hours, category, status, notes?, is_highlight?}, ...]
-    返回新插入的 id 列表
-    """
-    if not items:
-        return []
-
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    ids = []
-
-    for it in items:
-        cur.execute("""
-            INSERT INTO entries
-            (work_date, description, hours, category, status, notes, is_highlight, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            it["work_date"],
-            it["description"].strip(),
-            float(it["hours"]),
-            it["category"],
-            it.get("status", "done"),
-            it.get("notes", "").strip() or None,
-            1 if it.get("is_highlight") else 0,
-            _now()
-        ))
-        ids.append(cur.lastrowid)
-
-    conn.commit()
-    conn.close()
-    return ids
-
-
-def get_entries(
-    start_date: str,
-    end_date: str,
-    status: Optional[str] = None,
-    db_path: Optional[Path] = None
-) -> pd.DataFrame:
-    """
-    按日期范围查询，返回 pandas DataFrame（按日期、id 排序）
-    """
-    conn = get_conn(db_path)
-    sql = """
-        SELECT id, work_date, description, hours, category, status, notes, is_highlight,
-               created_at, updated_at
-        FROM entries
-        WHERE work_date BETWEEN ? AND ?
-    """
-    params = [start_date, end_date]
-    if status:
-        sql += " AND status = ?"
-        params.append(status)
-
-    sql += " ORDER BY work_date, id"
-    df = pd.read_sql_query(sql, conn, params=params)
-    conn.close()
-
-    if not df.empty:
-        df["is_highlight"] = df["is_highlight"].astype(bool)
-    return df
-
-
-def update_entry(entry_id: int, **fields: Any) -> bool:
-    """更新单条记录（支持部分字段）"""
-    if not fields:
-        return False
-
-    allowed = {"description", "hours", "category", "status", "notes", "is_highlight", "work_date"}
-    update_fields = {k: v for k, v in fields.items() if k in allowed}
-    if not update_fields:
-        return False
-
-    if "is_highlight" in update_fields:
-        update_fields["is_highlight"] = 1 if update_fields["is_highlight"] else 0
-
-    update_fields["updated_at"] = _now()
-
-    conn = get_conn()
-    cur = conn.cursor()
-    set_clause = ", ".join(f"{k} = ?" for k in update_fields)
-    cur.execute(f"UPDATE entries SET {set_clause} WHERE id = ?", list(update_fields.values()) + [entry_id])
-    ok = cur.rowcount > 0
-    conn.commit()
-    conn.close()
-    return ok
-
-
-def delete_entry(entry_id: int) -> bool:
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
-    ok = cur.rowcount > 0
-    conn.commit()
-    conn.close()
-    return ok
-
-
-# ==================== 聚合查询（供 UI 和报告使用） ====================
-
-def get_daily_summary(start_date: str, end_date: str, db_path: Optional[Path] = None) -> pd.DataFrame:
-    """每日汇总：总工时、条目数、完成数、高亮数"""
-    conn = get_conn(db_path)
-    df = pd.read_sql_query("""
-        SELECT
-            work_date,
-            SUM(hours) as total_hours,
-            COUNT(*) as item_count,
-            SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done_count,
-            SUM(CASE WHEN is_highlight=1 THEN 1 ELSE 0 END) as highlight_count
-        FROM entries
-        WHERE work_date BETWEEN ? AND ?
-        GROUP BY work_date
-        ORDER BY work_date
-    """, conn, params=[start_date, end_date])
-    conn.close()
-    return df
-
-
-def get_weekly_completed(week_start: str, db_path: Optional[Path] = None) -> pd.DataFrame:
-    """本周所有已完成（含高亮）事项，按日期和时长排序"""
-    week_end = (datetime.strptime(week_start, "%Y-%m-%d") + timedelta(days=6)).strftime("%Y-%m-%d")
-    df = get_entries(week_start, week_end, db_path=db_path)
-    if df.empty:
-        return df
-    done = df[df["status"] == "done"].copy()
-    done = done.sort_values(["hours", "work_date"], ascending=[False, True])
-    return done
-
-
-def get_category_breakdown(start_date: str, end_date: str, db_path: Optional[Path] = None) -> pd.DataFrame:
-    """分类统计"""
-    conn = get_conn(db_path)
-    df = pd.read_sql_query("""
-        SELECT category, SUM(hours) as hours, COUNT(*) as count
-        FROM entries
-        WHERE work_date BETWEEN ? AND ?
-        GROUP BY category
-        ORDER BY hours DESC
-    """, conn, params=[start_date, end_date])
-    conn.close()
-    return df
-
-
-def get_highlights(start_date: str, end_date: str, db_path: Optional[Path] = None) -> pd.DataFrame:
-    """高亮事项（周/月复盘用）"""
-    df = get_entries(start_date, end_date, db_path=db_path)
-    if df.empty:
-        return df
-    return df[df["is_highlight"] == True].sort_values(["work_date", "hours"], ascending=[True, False])
-
-
-def get_config(key: str, default: Any = None, db_path: Optional[Path] = None) -> Any:
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT value FROM config WHERE key = ?", (key,))
-    row = cur.fetchone()
-    conn.close()
-    if not row:
-        return default
-    val = row[0]
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError):
-        return val
-
-
-def set_config(key: str, value: Any, db_path: Optional[Path] = None) -> None:
-    conn = get_conn(db_path)
-    if isinstance(value, (list, dict)):
-        value = json.dumps(value, ensure_ascii=False)
-    else:
-        value = str(value)
-    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
-
-
-def get_all_categories(db_path: Optional[Path] = None) -> List[str]:
-    cats = get_config("categories", DEFAULT_CATEGORIES, db_path)
-    return cats if isinstance(cats, list) else DEFAULT_CATEGORIES
-
-
-def set_categories(categories: List[str], db_path: Optional[Path] = None) -> None:
-    set_config("categories", categories, db_path)
-
-
-def get_daily_target_hours(db_path: Optional[Path] = None) -> float:
-    val = get_config("daily_target_hours", "8.0", db_path)
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return 8.0
-
-
-def get_activity_template(db_path: Optional[Path] = None) -> str:
-    """当前活动类型模板 ID：dev | qa"""
-    val = get_config("activity_template", DEFAULT_TEMPLATE_ID, db_path)
-    if val in ("dev", "qa"):
-        return str(val)
-    return DEFAULT_TEMPLATE_ID
-
-
-def apply_activity_template(template_id: str, db_path: Optional[Path] = None) -> Dict[str, Any]:
-    """
-    切换固定模板：写入 template id，并重置分类列表为该模板标准 7 类。
-    返回模板信息。
-    """
-    t = get_template(template_id)
-    tid = t["id"]
-    cats = list(t["categories"])
-    set_config("activity_template", tid, db_path)
-    set_categories(cats, db_path)
-    return t
-
-
-# 旧版工时分类 → 研发模板（历史数据一次性映射）
 LEGACY_CATEGORY_MAP = {
     "开发": "开发实现类",
     "会议": "日常事务类",
@@ -383,209 +31,442 @@ LEGACY_CATEGORY_MAP = {
 }
 
 
-def migrate_legacy_entry_categories(db_path: Optional[Path] = None) -> int:
-    """
-    将 entries 中旧分类名映射为研发 7 类。返回更新条数。
-    幂等：已是新名的不再改。
-    """
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    updated = 0
-    for old, new in LEGACY_CATEGORY_MAP.items():
-        cur.execute(
-            "UPDATE entries SET category = ?, updated_at = ? WHERE category = ?",
-            (new, _now(), old),
-        )
-        updated += cur.rowcount
-    conn.commit()
-    conn.close()
-    return updated
+def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
+    path = Path(db_path) if db_path else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
 
 
-def backup_database(backup_dir: Optional[Path] = None, keep: int = 10) -> Path:
-    """备份 data/worklog.db 到 reports/，保留最近 keep 份。"""
-    import shutil
-
-    src = DB_PATH
-    out_dir = Path(backup_dir) if backup_dir else (app_base_dir() / "reports")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst = out_dir / f"worklog_backup_{ts}.db"
-    shutil.copy2(src, dst)
-
-    backups = sorted(
-        out_dir.glob("worklog_backup_*.db"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    for old in backups[keep:]:
-        try:
-            old.unlink()
-        except OSError:
-            pass
-    return dst
-
-
-# ==================== 外部日历订阅 ====================
-
-def list_ical_subscriptions(db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, name, url, enabled, color, last_sync, last_error, event_count, created_at
-        FROM ical_subscriptions
-        ORDER BY id
-        """
-    )
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return rows
-
-
-def add_ical_subscription(
-    name: str,
-    url: str,
-    color: str = "#2563eb",
-    db_path: Optional[Path] = None,
-) -> int:
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO ical_subscriptions (name, url, color)
-        VALUES (?, ?, ?)
-        """,
-        (name.strip(), url.strip(), color or "#2563eb"),
-    )
-    sid = int(cur.lastrowid)
-    conn.commit()
-    conn.close()
-    return sid
-
-
-def delete_ical_subscription(sub_id: int, db_path: Optional[Path] = None) -> bool:
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM ical_events WHERE subscription_id = ?", (sub_id,))
-    cur.execute("DELETE FROM ical_subscriptions WHERE id = ?", (sub_id,))
-    ok = cur.rowcount > 0
-    conn.commit()
-    conn.close()
-    return ok
-
-
-def set_ical_subscription_enabled(
-    sub_id: int, enabled: bool, db_path: Optional[Path] = None
-) -> None:
-    conn = get_conn(db_path)
-    conn.execute(
-        "UPDATE ical_subscriptions SET enabled = ? WHERE id = ?",
-        (1 if enabled else 0, sub_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def replace_ical_events(
-    sub_id: int,
-    events: List[Dict[str, Any]],
-    *,
-    error: Optional[str] = None,
-    db_path: Optional[Path] = None,
-) -> int:
-    """用新拉取的事件整体替换某订阅的缓存。"""
-    conn = get_conn(db_path)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM ical_events WHERE subscription_id = ?", (sub_id,))
-    n = 0
-    for ev in events:
-        cur.execute(
+def init_db(db_path: Path | str | sqlite3.Connection | None = None) -> None:
+    """Create or migrate one database without touching any other database."""
+    owns_connection = not isinstance(db_path, sqlite3.Connection)
+    conn = connect(db_path) if owns_connection else db_path
+    try:
+        conn.execute(
             """
-            INSERT OR IGNORE INTO ical_events
-            (subscription_id, uid, summary, description, location, start_at, end_at, all_day, event_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                sub_id,
-                ev.get("uid") or "",
-                ev.get("summary") or "(无标题)",
-                ev.get("description") or "",
-                ev.get("location") or "",
-                ev.get("start_at"),
-                ev.get("end_at"),
-                1 if ev.get("all_day") else 0,
-                ev.get("event_date"),
-            ),
+            CREATE TABLE IF NOT EXISTS people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                template_id TEXT NOT NULL DEFAULT 'dev',
+                active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+            """
         )
-        n += 1
-    cur.execute(
-        """
-        UPDATE ical_subscriptions
-        SET last_sync = ?, last_error = ?, event_count = ?
-        WHERE id = ?
-        """,
-        (_now(), error, n if error is None else 0, sub_id),
-    )
-    conn.commit()
-    conn.close()
-    return n
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL REFERENCES people(id),
+                work_date TEXT NOT NULL CHECK(length(work_date)=10),
+                description TEXT NOT NULL,
+                hours REAL NOT NULL CHECK(hours > 0 AND hours <= 24),
+                category TEXT NOT NULL,
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+            """
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO config(key, value) VALUES('daily_target_hours', '8.0')"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO config(key, value) VALUES('activity_template', ?)",
+            (DEFAULT_TEMPLATE_ID,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO config(key, value) VALUES('categories', ?)",
+            (json.dumps(DEFAULT_CATEGORIES, ensure_ascii=False),),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO people(name, template_id) VALUES(?, ?)",
+            (DEFAULT_PERSON_NAME, DEFAULT_TEMPLATE_ID),
+        )
+
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(entries)")}
+        if "person_id" not in columns:
+            conn.execute("ALTER TABLE entries ADD COLUMN person_id INTEGER")
+        first_person = conn.execute("SELECT id FROM people ORDER BY id LIMIT 1").fetchone()
+        if first_person:
+            conn.execute(
+                "UPDATE entries SET person_id = ? WHERE person_id IS NULL",
+                (first_person[0],),
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_person_date "
+            "ON entries(person_id, work_date)"
+        )
+        for old, new in LEGACY_CATEGORY_MAP.items():
+            conn.execute(
+                "UPDATE entries SET category = ?, updated_at = datetime('now','localtime') "
+                "WHERE category = ?",
+                (new, old),
+            )
+        conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
 
 
-def mark_ical_sync_error(sub_id: int, error: str, db_path: Optional[Path] = None) -> None:
-    conn = get_conn(db_path)
-    conn.execute(
-        """
-        UPDATE ical_subscriptions
-        SET last_sync = ?, last_error = ?
-        WHERE id = ?
-        """,
-        (_now(), error, sub_id),
-    )
-    conn.commit()
-    conn.close()
+def _rows(conn: sqlite3.Connection, sql: str, params: Iterable[Any] = ()) -> list[dict]:
+    return [dict(row) for row in conn.execute(sql, tuple(params)).fetchall()]
 
 
-def get_ical_events(
+def list_people(
+    db_path: Path | str | None = None, *, active_only: bool = True
+) -> list[dict]:
+    with closing(connect(db_path)) as conn:
+        where = " WHERE active = 1" if active_only else ""
+        return _rows(
+            conn,
+            "SELECT id, name, template_id, active, created_at FROM people"
+            + where
+            + " ORDER BY id",
+        )
+
+
+def get_person(person_id: int, db_path: Path | str | None = None) -> dict | None:
+    with closing(connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT id, name, template_id, active, created_at FROM people WHERE id = ?",
+            (int(person_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def add_person(
+    name: str,
+    template_id: str = DEFAULT_TEMPLATE_ID,
+    db_path: Path | str | None = None,
+) -> int:
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("人员姓名不能为空")
+    template_id = get_template(template_id)["id"]
+    try:
+        with connect(db_path) as conn:
+            cursor = conn.execute(
+                "INSERT INTO people(name, template_id) VALUES(?, ?)",
+                (clean_name, template_id),
+            )
+            return int(cursor.lastrowid)
+    except sqlite3.IntegrityError as exc:
+        raise ValueError(f"人员「{clean_name}」已存在") from exc
+
+
+def update_person(
+    person_id: int,
+    name: str,
+    template_id: str,
+    db_path: Path | str | None = None,
+) -> None:
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("人员姓名不能为空")
+    template_id = get_template(template_id)["id"]
+    try:
+        with connect(db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE people SET name = ?, template_id = ? WHERE id = ?",
+                (clean_name, template_id, int(person_id)),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("人员不存在")
+    except sqlite3.IntegrityError as exc:
+        raise ValueError(f"人员「{clean_name}」已存在") from exc
+
+
+def delete_person(person_id: int, db_path: Path | str | None = None) -> None:
+    with connect(db_path) as conn:
+        if conn.execute("SELECT COUNT(*) FROM people").fetchone()[0] <= 1:
+            raise ValueError("至少保留一名人员")
+        count = conn.execute(
+            "SELECT COUNT(*) FROM entries WHERE person_id = ?", (int(person_id),)
+        ).fetchone()[0]
+        if count:
+            raise ValueError(f"该人员还有 {count} 条工时记录，不能删除")
+        cursor = conn.execute("DELETE FROM people WHERE id = ?", (int(person_id),))
+        if cursor.rowcount != 1:
+            raise ValueError("人员不存在")
+
+
+def get_categories(person_id: int, db_path: Path | str | None = None) -> list[str]:
+    person = get_person(person_id, db_path)
+    return template_categories(person["template_id"] if person else DEFAULT_TEMPLATE_ID)
+
+
+def add_entry(
+    person_id: int,
+    work_date: str,
+    description: str,
+    hours: float,
+    category: str,
+    notes: str = "",
+    db_path: Path | str | None = None,
+) -> int:
+    description = (description or "").strip()
+    category = (category or "").strip()
+    hours = float(hours)
+    if not description:
+        raise ValueError("任务名称不能为空")
+    if not 0 < hours <= 24:
+        raise ValueError("工时必须大于 0 且不超过 24")
+    if category not in get_categories(person_id, db_path):
+        raise ValueError("活动类型无效")
+    datetime.strptime(work_date, "%Y-%m-%d")
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO entries(person_id, work_date, description, hours, category, notes)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (int(person_id), work_date, description, hours, category, (notes or "").strip()),
+        )
+        return int(cursor.lastrowid)
+
+
+def get_entries(
     start_date: str,
     end_date: str,
-    db_path: Optional[Path] = None,
-) -> pd.DataFrame:
-    """查询已启用订阅在日期范围内的缓存事件。"""
-    conn = get_conn(db_path)
-    df = pd.read_sql_query(
-        """
-        SELECT
-            e.id,
-            e.subscription_id,
-            s.name AS source_name,
-            s.color AS source_color,
-            e.uid,
-            e.summary,
-            e.description,
-            e.location,
-            e.start_at,
-            e.end_at,
-            e.all_day,
-            e.event_date
-        FROM ical_events e
-        JOIN ical_subscriptions s ON s.id = e.subscription_id
-        WHERE s.enabled = 1
-          AND e.event_date BETWEEN ? AND ?
-        ORDER BY e.event_date, e.start_at, e.id
-        """,
-        conn,
-        params=[start_date, end_date],
+    *,
+    person_id: int,
+    keyword: str = "",
+    db_path: Path | str | None = None,
+) -> list[dict]:
+    sql = """
+        SELECT id, person_id, work_date, description, hours, category,
+               COALESCE(notes, '') AS notes, created_at, updated_at
+        FROM entries
+        WHERE person_id = ? AND work_date BETWEEN ? AND ?
+    """
+    params: list[Any] = [int(person_id), start_date, end_date]
+    if keyword.strip():
+        sql += " AND (description LIKE ? OR COALESCE(notes, '') LIKE ?)"
+        term = f"%{keyword.strip()}%"
+        params.extend([term, term])
+    sql += " ORDER BY work_date DESC, id DESC"
+    with closing(connect(db_path)) as conn:
+        return _rows(conn, sql, params)
+
+
+def update_entry(
+    entry_id: int,
+    person_id: int,
+    *,
+    description: str,
+    hours: float,
+    category: str,
+    notes: str = "",
+    work_date: str | None = None,
+    db_path: Path | str | None = None,
+) -> bool:
+    description = (description or "").strip()
+    hours = float(hours)
+    if not description or not 0 < hours <= 24:
+        raise ValueError("请填写有效的任务名称和工时")
+    if category not in get_categories(person_id, db_path):
+        raise ValueError("活动类型无效")
+    fields = ["description = ?", "hours = ?", "category = ?", "notes = ?"]
+    values: list[Any] = [description, hours, category, (notes or "").strip()]
+    if work_date:
+        datetime.strptime(work_date, "%Y-%m-%d")
+        fields.append("work_date = ?")
+        values.append(work_date)
+    fields.append("updated_at = datetime('now','localtime')")
+    values.extend([int(entry_id), int(person_id)])
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            f"UPDATE entries SET {', '.join(fields)} WHERE id = ? AND person_id = ?",
+            values,
+        )
+        return cursor.rowcount == 1
+
+
+def delete_entry(
+    entry_id: int, person_id: int, db_path: Path | str | None = None
+) -> bool:
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM entries WHERE id = ? AND person_id = ?",
+            (int(entry_id), int(person_id)),
+        )
+        return cursor.rowcount == 1
+
+
+def daily_summary(
+    start_date: str,
+    end_date: str,
+    person_id: int,
+    db_path: Path | str | None = None,
+) -> list[dict]:
+    with closing(connect(db_path)) as conn:
+        return _rows(
+            conn,
+            """
+            SELECT work_date, ROUND(SUM(hours), 2) AS total_hours, COUNT(*) AS item_count
+            FROM entries
+            WHERE person_id = ? AND work_date BETWEEN ? AND ?
+            GROUP BY work_date ORDER BY work_date
+            """,
+            (int(person_id), start_date, end_date),
+        )
+
+
+def category_summary(
+    start_date: str,
+    end_date: str,
+    person_id: int,
+    db_path: Path | str | None = None,
+) -> list[dict]:
+    with closing(connect(db_path)) as conn:
+        return _rows(
+            conn,
+            """
+            SELECT category, ROUND(SUM(hours), 2) AS hours, COUNT(*) AS item_count
+            FROM entries
+            WHERE person_id = ? AND work_date BETWEEN ? AND ?
+            GROUP BY category ORDER BY hours DESC
+            """,
+            (int(person_id), start_date, end_date),
+        )
+
+
+def get_hours_by_date(
+    start_date: str,
+    end_date: str,
+    *,
+    person_id: int,
+    db_path: Path | str | None = None,
+) -> dict[str, float]:
+    return {
+        row["work_date"]: float(row["total_hours"])
+        for row in daily_summary(start_date, end_date, person_id, db_path)
+    }
+
+
+def get_config(
+    key: str, default: Any = None, db_path: Path | str | None = None
+) -> Any:
+    with closing(connect(db_path)) as conn:
+        row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return row[0]
+
+
+def set_config(key: str, value: Any, db_path: Path | str | None = None) -> None:
+    encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value)
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO config(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, encoded),
+        )
+
+
+def get_daily_target_hours(db_path: Path | str | None = None) -> float:
+    try:
+        return float(get_config("daily_target_hours", "8.0", db_path))
+    except (TypeError, ValueError):
+        return 8.0
+
+
+def backup_database(
+    backup_dir: Path | str | None = None,
+    keep: int = 10,
+    db_path: Path | str | None = None,
+) -> Path:
+    """Create a transactionally consistent SQLite backup, including WAL data."""
+    source_path = Path(db_path) if db_path else DB_PATH
+    output_dir = Path(backup_dir) if backup_dir else app_base_dir() / "reports"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    destination = output_dir / f"worklog_backup_{stamp}.db"
+    with closing(connect(source_path)) as source, closing(sqlite3.connect(destination)) as target:
+        source.backup(target)
+        result = target.execute("PRAGMA integrity_check").fetchone()[0]
+        if result != "ok":
+            raise RuntimeError(f"备份完整性检查失败：{result}")
+    backups = sorted(
+        output_dir.glob("worklog_backup_*.db"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
     )
-    conn.close()
-    if not df.empty:
-        df["all_day"] = df["all_day"].astype(bool)
-    return df
+    for old in backups[max(1, int(keep)) :]:
+        old.unlink(missing_ok=True)
+    return destination
 
 
-if __name__ == "__main__":
-    # 简单自测
-    init_db()
-    print("DB initialized at", DB_PATH)
-    print("Categories:", get_all_categories())
-    print("Target hours:", get_daily_target_hours())
+def export_csv(
+    start_date: str,
+    end_date: str,
+    person_id: int,
+    db_path: Path | str | None = None,
+) -> bytes:
+    person = get_person(person_id, db_path)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["日期", "人员", "任务名称", "时长(h)", "分类", "备注"])
+    for row in reversed(get_entries(start_date, end_date, person_id=person_id, db_path=db_path)):
+        writer.writerow(
+            [row["work_date"], person["name"] if person else "", row["description"], row["hours"], row["category"], row["notes"]]
+        )
+    return ("\ufeff" + output.getvalue()).encode("utf-8")
+
+
+def import_rows(
+    person_id: int,
+    rows: list[dict],
+    *,
+    replace: bool = False,
+    db_path: Path | str | None = None,
+) -> int:
+    """Validate first, then replace/insert within one transaction."""
+    categories = set(get_categories(person_id, db_path))
+    normalized = []
+    for index, row in enumerate(rows, 2):
+        try:
+            work_date = (row.get("日期") or row.get("work_date") or "").strip()
+            datetime.strptime(work_date, "%Y-%m-%d")
+            description = (row.get("任务名称") or row.get("工作内容") or row.get("description") or "").strip()
+            hours = float(row.get("时长(h)") or row.get("工时") or row.get("hours"))
+            category = (row.get("分类") or row.get("活动类型") or row.get("category") or "").strip()
+            notes = (row.get("备注") or row.get("notes") or "").strip()
+            category = LEGACY_CATEGORY_MAP.get(category, category)
+            if not description or not 0 < hours <= 24 or category not in categories:
+                raise ValueError
+            normalized.append((int(person_id), work_date, description, hours, category, notes))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(f"CSV 第 {index} 行格式无效") from exc
+
+    if not normalized:
+        raise ValueError("CSV 中没有可导入的数据")
+
+    with connect(db_path) as conn:
+        if replace:
+            conn.execute("DELETE FROM entries WHERE person_id = ?", (int(person_id),))
+        conn.executemany(
+            "INSERT INTO entries(person_id, work_date, description, hours, category, notes) VALUES(?, ?, ?, ?, ?, ?)",
+            normalized,
+        )
+    return len(normalized)
+
+
+init_db()

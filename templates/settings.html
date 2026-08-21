@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading"><div><h1>设置</h1><p class="muted">轻量版只保留日常使用所需配置</p></div></div>
+<div class="settings-grid">
+  <section class="card">
+    <h2>人员管理</h2>
+    {% for item in people %}
+      <div class="person-row">
+        <form method="post" action="{{ url_for('edit_person', person_id=item.id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input name="name" value="{{ item.name }}" required>
+          <select name="template_id"><option value="dev" {% if item.template_id == 'dev' %}selected{% endif %}>研发人员</option><option value="qa" {% if item.template_id == 'qa' %}selected{% endif %}>测试人员</option></select>
+          <button type="submit">保存</button>
+        </form>
+        <form method="post" action="{{ url_for('remove_person', person_id=item.id) }}" onsubmit="return confirm('确认删除这个人员？')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="danger-link" type="submit">删除</button>
+        </form>
+      </div>
+    {% endfor %}
+    <form class="add-person" method="post" action="{{ url_for('create_person') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input name="name" placeholder="新人员姓名" required>
+      <select name="template_id"><option value="dev">研发人员</option><option value="qa">测试人员</option></select><button class="primary" type="submit">添加</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>工时与备份</h2>
+    <form method="post" action="{{ url_for('update_target') }}" class="compact-form">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>每日目标工时<input name="target" type="number" min="0.1" max="24" step="0.5" value="{{ target }}"></label><button type="submit">保存</button>
+    </form>
+    <form method="post" action="{{ url_for('create_backup') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button type="submit">立即备份数据库</button></form>
+    <p class="muted small">备份写入 reports/，使用 SQLite 原生一致性备份，保留最近 10 份。</p>
+  </section>
+  <section class="card">
+    <h2>CSV 导入导出</h2>
+    <p class="muted small">字段：日期、任务名称、时长(h)、分类、备注。导入仅作用于当前人员 {{ person.name }}。</p>
+    <a class="button" href="{{ url_for('download_csv') }}">导出今年数据</a>
+    <form method="post" action="{{ url_for('upload_csv') }}" enctype="multipart/form-data" class="import-form" onsubmit="return this.mode.value !== 'replace' || confirm('将先备份，再清空当前人员的数据。确认继续？')">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="file" name="file" accept=".csv,text/csv" required>
+      <select name="mode"><option value="append">追加导入</option><option value="replace">清空当前人员后导入</option></select><button class="primary" type="submit">开始导入</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>活动模板</h2>
+    {% for template_id, template in templates.items() %}<h3>{{ template.name }}</h3><p class="chips">{% for category in template.categories %}<span>{{ category }}</span>{% endfor %}</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}

@@ -1,23 +1,17 @@
-#!/bin/bash
-# 停止工作日志（Streamlit）
+#!/usr/bin/env bash
+set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "🛑 正在停止工作日志..."
-
-if [ -f streamlit.pid ]; then
-    PID=$(cat streamlit.pid)
-    if kill "$PID" 2>/dev/null; then
-        echo "✅ 已停止 Streamlit (PID: $PID)"
-    else
-        echo "⚠️  进程 $PID 已不存在，清理 PID 文件"
-    fi
-    rm -f streamlit.pid
-else
-    if pkill -f "streamlit run app.py" 2>/dev/null; then
-        echo "✅ 已通过进程名停止 Streamlit"
-    else
-        echo "ℹ️  没有找到正在运行的 Streamlit 进程"
-    fi
+if [ ! -f worklog.pid ]; then
+  echo "没有找到 worklog.pid"
+  exit 0
 fi
 
-echo "完成。"
+pid="$(cat worklog.pid)"
+if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+  kill "$pid"
+  echo "已停止工作日志（PID $pid）"
+else
+  echo "进程已不存在"
+fi
+rm -f worklog.pid

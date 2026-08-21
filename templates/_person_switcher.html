@@ -1,0 +1,11 @@
+<form class="person-switcher" method="post" action="{{ url_for('select_person') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="return_to" value="{{ request.full_path }}">
+  <label>当前人员
+    <select name="person_id" onchange="this.form.submit()">
+      {% for item in people %}
+        <option value="{{ item.id }}" {% if item.id == person.id %}selected{% endif %}>{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>

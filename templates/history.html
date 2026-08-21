@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading"><div><h1>历史记录</h1><p class="muted">查询并逐条修改，所有操作限定当前人员</p></div>{% include "_person_switcher.html" %}</div>
+<form class="card filters" method="get">
+  <label>开始日期<input type="date" name="start" value="{{ start }}"></label>
+  <label>结束日期<input type="date" name="end" value="{{ end }}"></label>
+  <label>关键词<input name="q" value="{{ keyword }}" placeholder="任务或备注"></label>
+  <button type="submit">查询</button>
+</form>
+<section class="card">
+  <div class="section-title"><h2>{{ person.name }}的记录</h2><span>{{ entries|length }} 条</span></div>
+  {% if entries %}
+    <div class="entry-list">
+      {% for entry in entries %}
+        <details class="entry">
+          <summary><span><b>{{ entry.work_date }} · {{ entry.description }}</b><small>{{ entry.category }}{% if entry.notes %} · {{ entry.notes }}{% endif %}</small></span><strong>{{ entry.hours }}h</strong></summary>
+          <form method="post" action="{{ url_for('edit_entry', entry_id=entry.id) }}" class="inline-edit">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="return_to" value="{{ request.full_path }}">
+            <input name="description" value="{{ entry.description }}" required><input name="work_date" type="date" value="{{ entry.work_date }}" required>
+            <input name="hours" type="number" min="0.1" max="24" step="0.5" value="{{ entry.hours }}" required>
+            <select name="category">{% for category in categories %}<option {% if category == entry.category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select>
+            <input name="notes" value="{{ entry.notes }}" placeholder="备注"><button type="submit">保存修改</button>
+          </form>
+          <form method="post" action="{{ url_for('remove_entry', entry_id=entry.id) }}" onsubmit="return confirm('确认删除这条记录？')">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="danger-link" type="submit">删除记录</button>
+          </form>
+        </details>
+      {% endfor %}
+    </div>
+  {% else %}<p class="empty-state">没有符合条件的记录。</p>{% endif %}
+</section>
+{% endblock %}

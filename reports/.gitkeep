@@ -1,2 +1,1 @@
-# 导出的 Excel 月报、PDF、备份目录
-# 保留此目录用于生成报告
+# SQLite backups are created here at runtime.
