@@ -24,7 +24,7 @@
   <section class="card">
     <h2>工时与备份</h2>
     <form method="post" action="{{ url_for('update_target') }}" class="compact-form">
-      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>每日目标工时<input name="target" type="number" min="0.1" max="24" step="0.5" value="{{ target }}"></label><button type="submit">保存</button>
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>每日目标工时<input name="target" type="number" min="0.1" max="24" step="0.1" value="{{ target }}"></label><button type="submit">保存</button>
     </form>
     <form method="post" action="{{ url_for('create_backup') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button type="submit">立即备份数据库</button></form>
     <p class="muted small">备份写入 reports/，使用 SQLite 原生一致性备份，保留最近 10 份。</p>

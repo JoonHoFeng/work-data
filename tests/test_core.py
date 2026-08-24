@@ -142,7 +142,7 @@ class WebTests(unittest.TestCase):
                 "_csrf": self._csrf(),
                 "work_date": "2026-08-21",
                 "description": "Web记录",
-                "hours": "2",
+                "hours": "8",
                 "category": "开发实现类",
                 "notes": "",
             },
@@ -150,6 +150,7 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("Web记录".encode(), response.data)
+        self.assertIn(b"8.0h", response.data)
 
     def test_post_requires_csrf(self):
         response = self.client.post("/entries", data={})
