@@ -36,13 +36,13 @@
 
     <form class="card entry-form" method="post" action="{{ url_for('create_entry') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="work_date" value="{{ selected }}">
       <h2>{{ selected }} 新增记录</h2>
       <div class="form-grid">
-        <label class="wide">任务名称<input name="description" required maxlength="120" placeholder="简要说明完成的工作"></label>
-        <label>日期<input name="work_date" type="date" value="{{ selected }}" required></label>
-        <label>工时<input name="hours" type="number" min="0.1" max="24" step="0.1" value="1.0" required></label>
-        <label>活动类型<select name="category">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></label>
-        <label class="wide">备注<input name="notes" maxlength="500" placeholder="可选"></label>
+        <label class="wide">项目名称 / 任务名称<input name="description" required maxlength="120" placeholder="例如：工作日志系统 / 优化部署脚本"></label>
+        <label>{{ templates[person.template_id].label }}<select name="category">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></label>
+        <label>工作时长<input name="hours" type="number" min="0.1" max="24" step="0.1" value="1.0" required></label>
+        <label class="wide">工作内容<input name="notes" maxlength="500" placeholder="填写本次工作的具体内容"></label>
       </div>
       <button class="primary" type="submit">保存记录</button>
     </form>

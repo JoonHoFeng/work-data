@@ -135,6 +135,10 @@ class WebTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("每日填报".encode(), response.data)
+        self.assertIn("项目名称 / 任务名称".encode(), response.data)
+        self.assertIn("开发活动类型".encode(), response.data)
+        self.assertIn("工作时长".encode(), response.data)
+        self.assertIn("工作内容".encode(), response.data)
 
         response = self.client.post(
             "/entries",
