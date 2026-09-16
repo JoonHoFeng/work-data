@@ -6,16 +6,16 @@
   <meta name="color-scheme" content="light">
   <link rel="icon" href="data:,">
   <title>{% block title %}工作日志{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260916') }}">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ url_for('dashboard') }}">工作日志</a>
+    <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark" aria-hidden="true">▤</span>工作日志</a>
     {% if request.endpoint != 'login' %}
-      <nav>
-        <a href="{{ url_for('dashboard') }}">填报</a>
-        <a href="{{ url_for('history') }}">历史</a>
-        <a href="{{ url_for('settings') }}">设置</a>
+      <nav aria-label="主导航">
+        <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>填报</a>
+        <a href="{{ url_for('history') }}" {% if request.endpoint == 'history' %}aria-current="page"{% endif %}>历史</a>
+        <a href="{{ url_for('settings') }}" {% if request.endpoint == 'settings' %}aria-current="page"{% endif %}>设置</a>
       </nav>
       {% if auth_enabled %}
         <form class="logout" method="post" action="{{ url_for('logout') }}">
@@ -28,7 +28,7 @@
   <main class="container">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
-        <div class="notice {{ category }}">{{ message }}</div>
+        <div class="notice {{ category }}" role="status">{{ message }}</div>
       {% endfor %}
     {% endwith %}
     {% block content %}{% endblock %}

@@ -7,23 +7,25 @@
 
 <div class="dashboard-grid">
   <aside class="card calendar-card">
+    <p class="calendar-caption">工作日历 · 点击日期查看与填报</p>
     <div class="calendar-nav">
-      <a href="{{ url_for('dashboard', date=prev_month) }}">‹</a>
+      <a href="{{ url_for('dashboard', date=prev_month) }}" aria-label="上个月">‹</a>
       <strong>{{ selected.year }}年{{ selected.month }}月</strong>
-      <a href="{{ url_for('dashboard', date=next_month) }}">›</a>
+      <a href="{{ url_for('dashboard', date=next_month) }}" aria-label="下个月">›</a>
     </div>
     <div class="calendar weekdays">{% for item in ['一','二','三','四','五','六','日'] %}<span>{{ item }}</span>{% endfor %}</div>
     <div class="calendar days">
       {% for week in calendar_rows %}
         {% for item in week %}
           {% if item %}
-            <a class="day {{ item.level }} {% if item.selected %}selected{% endif %}" href="{{ url_for('dashboard', date=item.date) }}">
+            <a class="day {{ item.level }} {% if item.selected %}selected{% endif %}" href="{{ url_for('dashboard', date=item.date) }}" aria-label="{{ item.date }}，已记录 {{ item.hours }} 小时" {% if item.selected %}aria-current="date"{% endif %}>
               <b>{{ item.day }}</b><small>{% if item.hours %}{{ '%.1f'|format(item.hours) }}h{% endif %}</small>
             </a>
           {% else %}<span class="day blank"></span>{% endif %}
         {% endfor %}
       {% endfor %}
     </div>
+    <div class="calendar-legend"><span>未满目标</span><span>已达目标</span></div>
     <a class="today-link" href="{{ url_for('dashboard', date=today) }}">回到今天</a>
   </aside>
 
@@ -37,14 +39,14 @@
     <form class="card entry-form" method="post" action="{{ url_for('create_entry') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="work_date" value="{{ selected }}">
-      <h2>{{ selected }} 新增记录</h2>
+      <div class="section-title"><h2>新增记录</h2><time class="date-badge" datetime="{{ selected }}">{{ selected }}</time></div>
       <div class="form-grid">
         <label class="wide">项目名称 / 任务名称<input name="description" required maxlength="120" placeholder="例如：工作日志系统 / 优化部署脚本"></label>
         <label>{{ templates[person.template_id].label }}<select name="category">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></label>
-        <label>工作时长<input name="hours" type="number" min="0.1" max="24" step="0.1" value="1.0" required></label>
-        <label class="wide">工作内容<input name="notes" maxlength="500" placeholder="填写本次工作的具体内容"></label>
+        <label>工作时长（小时）<input name="hours" type="number" min="0.1" max="24" step="0.1" value="1.0" required></label>
+        <label class="wide">工作内容<textarea name="notes" rows="4" maxlength="500" placeholder="记录具体工作、完成结果或需要跟进的事项"></textarea></label>
       </div>
-      <button class="primary" type="submit">保存记录</button>
+      <div class="form-footer"><small>记录将保存到 {{ person.name }} · {{ selected }}</small><button class="primary" type="submit">保存记录</button></div>
     </form>
 
     <section class="card">
@@ -70,7 +72,7 @@
             </details>
           {% endfor %}
         </div>
-      {% else %}<p class="empty-state">这一天还没有记录。</p>{% endif %}
+      {% else %}<p class="empty-state">这一天还没有记录。<br>在上方填写今天的第一项工作。</p>{% endif %}
     </section>
 
     <section class="card">
