@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
-  <link rel="icon" href="data:,">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg', v='20261022') }}" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.png', v='20261022') }}" type="image/png" sizes="32x32">
   <title>{% block title %}工作日志{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260916') }}">
 </head>
